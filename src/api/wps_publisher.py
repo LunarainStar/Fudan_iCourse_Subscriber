@@ -241,16 +241,20 @@ class WpsPublisher:
         return None
 
     # ---------------------------------------------------------------- public
-    def publish(self, items: list[dict]) -> tuple[int, int, list[str]]:
+    def publish(self, items: list[dict]) -> tuple[int, int, list[dict], list[str]]:
         """Publish every item.
 
-        Returns ``(created, adopted, errors)``. ``adopted`` counts lectures that
-        already had a document (never re-created).
+        Returns ``(created, adopted, published_rows, errors)`` where
+        ``published_rows`` lists the documents created *in this call*
+        (``{course_title, sub_title, date, link}``) so a caller can notify about
+        exactly what is new. ``adopted`` counts lectures that already had a
+        document (never re-created).
         """
         if not items:
-            return 0, 0, []
+            return 0, 0, [], []
 
         created = adopted = 0
+        published: list[dict] = []
         errors: list[str] = []
 
         for it in items:
@@ -278,6 +282,12 @@ class WpsPublisher:
                     created += 1
                     # Refresh the cache so a later item in the same batch sees it.
                     self._children.pop(parent, None)
+                    published.append({
+                        "course_title": course,
+                        "sub_title": sub,
+                        "date": date,
+                        "link": data.get("link_url"),
+                    })
                     print("[WPS] created: %s -> %s" % (title, data.get("link_url")), flush=True)
                 else:
                     errors.append("%s: %s" % (title, str(txt)[:160]))
@@ -290,4 +300,4 @@ class WpsPublisher:
                 errors.append("%s: %s: %s" % (title, type(e).__name__, e))
                 print("[WPS] ERROR %s: %s: %s" % (title, type(e).__name__, e), flush=True)
 
-        return created, adopted, errors
+        return created, adopted, published, errors
