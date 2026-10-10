@@ -7,18 +7,19 @@ AudioDownloader.  This file does only orchestration:
   1. Build all components.
   2. Login + enumerate.
   3. Drive LectureRunner across the queued lectures.
-  4. Email + bookkeeping.
+  4. Publish summaries to WPS smart docs + bookkeeping.
   5. Shutdown.
 
 Anything more interesting belongs in one of ``src/*`` modules.
 """
 
+import os
 import time
 import traceback
 
 from src.runtime import config
 from src.data.database import Database
-from src.api.emailer import Emailer
+from src.api.wps_publisher import WpsPublisher
 from src.api.icourse import ICourseClient
 from src.pipeline.lecture_runner import LectureRunner
 from src.runtime.reporter import Reporter
@@ -148,7 +149,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
                     scheduler: Scheduler, transcriber: Transcriber,
                     summarizer: Summarizer, reporter: Reporter,
                     all_lectures: list[tuple[str, str, dict]],
-                    email_items: list) -> None:
+                    pending_items: list) -> None:
     """Phase 2: run each lecture through LectureRunner.
 
     Pre-schedules the first lecture's prefetch (audio + images) before
@@ -178,7 +179,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
                 course_id, course_title, lecture, next_info=next_info,
             )
             if summary:
-                email_items.append({
+                pending_items.append({
                     "sub_id": sub_id,
                     "course_title": course_title,
                     "sub_title": lecture.get("sub_title", sub_id),
@@ -196,33 +197,53 @@ def _drive_lectures(client: ICourseClient, db: Database,
             scheduler.audio_downloader.release(sub_id)
 
 
-def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
-                email_items: list) -> None:
-    """Append any previously-processed-but-unsent lectures, then send."""
+def _publish_to_wps(publisher: WpsPublisher | None, db: Database, reporter: Reporter,
+                    pending_items: list) -> None:
+    """Append any previously-processed-but-unpublished lectures, then publish.
+
+    ``db.get_unsent_lectures()`` is reused as the "not yet published" set: the
+    pipeline is idempotent on ``emailed_at``, so a run that crashes mid-publish
+    resumes on the next run instead of losing summaries.
+    """
     unsent = db.get_unsent_lectures()
     if unsent:
-        seen_sub_ids = {item["sub_id"] for item in email_items}
+        seen_sub_ids = {item["sub_id"] for item in pending_items}
         for row in unsent:
             if row["sub_id"] not in seen_sub_ids:
-                email_items.append({
+                pending_items.append({
                     "sub_id": row["sub_id"],
                     "course_title": row["course_title"],
                     "sub_title": row["sub_title"],
                     "date": row["date"],
                     "summary": row["summary"],
                 })
-        reporter.email_recovered_unsent(len(unsent))
+        reporter.info(f"[WPS] Recovered {len(unsent)} previously unsent lecture(s)")
 
-    if not (emailer and email_items):
+    if not (publisher and pending_items):
         return
     try:
-        reporter.email_summary(len(email_items))
-        if emailer.send(email_items):
-            db.mark_emailed_batch([item["sub_id"] for item in email_items])
-        else:
-            reporter.email_failed()
+        reporter.info(f"[WPS] Publishing {len(pending_items)} lecture(s)...")
+        created, adopted, errors = publisher.publish(pending_items)
+        reporter.info(
+            f"[WPS] Done: {created} created, {adopted} already present, "
+            f"{len(errors)} failed"
+        )
+        # Mark published only what actually landed (created or already present),
+        # so a failed item is retried on the next run.
+        failed_titles = {e.split(":", 1)[0].strip() for e in errors}
+        done = []
+        for item in pending_items:
+            title = f"{item['course_title']} {item['sub_title']}"
+            safe_title = title.replace("/", "_").replace("\\", "_")
+            if safe_title not in failed_titles and title not in failed_titles:
+                done.append(item["sub_id"])
+        if done:
+            db.mark_emailed_batch(done)
+        if errors:
+            for e in errors:
+                reporter.info(f"[WPS]   failed: {e}")
     except Exception:
-        reporter.info("[Email] Failed to send:")
+        reporter.info("[WPS] Publish failed:")
         traceback.print_exc()
 
 
@@ -306,13 +327,15 @@ def run():
         print(f"  [Date] Synced {corrected} lecture date(s) from sub_title", flush=True)
     transcriber = Transcriber()
     summarizer = Summarizer() if config.COURSE_IDS else None
-    emailer = Emailer() if (
-        config.SMTP_EMAIL and config.SMTP_PASSWORD
-    ) else None
+    # Publishing needs the Kdocs token; without it we skip the step entirely
+    # (course crawling/storage still work).
+    publisher = WpsPublisher() if os.environ.get("KDOCS_TOKEN", "").strip() else None
+    if publisher is None:
+        reporter.info("[WPS] KDOCS_TOKEN not set — summaries will not be published.")
 
     vpn = login_with_retry()
     client = ICourseClient(vpn)
-    email_items: list = []
+    pending_items: list = []
 
     # Discover new semesters every run; only fetch catalogs not yet stored.
     _crawl_semester_catalog(client, db, reporter)
@@ -329,13 +352,13 @@ def run():
         all_lectures = _enumerate_lectures(client, db, reporter)
         _drive_lectures(
             client, db, scheduler, transcriber, summarizer, reporter,
-            all_lectures, email_items,
+            all_lectures, pending_items,
         )
 
     finally:
         scheduler.shutdown()
 
-    _send_email(emailer, db, reporter, email_items)
+    _publish_to_wps(publisher, db, reporter, pending_items)
     reporter.run_footer()
 
 
