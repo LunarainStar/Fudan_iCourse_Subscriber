@@ -20,6 +20,7 @@ import traceback
 from src.runtime import config
 from src.data.database import Database
 from src.api.wps_publisher import WpsPublisher
+from src.api.notifier import Notifier
 from src.api.icourse import ICourseClient
 from src.pipeline.lecture_runner import LectureRunner
 from src.runtime.reporter import Reporter
@@ -197,13 +198,16 @@ def _drive_lectures(client: ICourseClient, db: Database,
             scheduler.audio_downloader.release(sub_id)
 
 
-def _publish_to_wps(publisher: WpsPublisher | None, db: Database, reporter: Reporter,
-                    pending_items: list) -> None:
+def _publish_to_wps(publisher: WpsPublisher | None, notifier: Notifier, db: Database,
+                    reporter: Reporter, pending_items: list) -> None:
     """Append any previously-processed-but-unpublished lectures, then publish.
 
     ``db.get_unsent_lectures()`` is reused as the "not yet published" set: the
     pipeline is idempotent on ``emailed_at``, so a run that crashes mid-publish
     resumes on the next run instead of losing summaries.
+
+    A short notification email is sent afterwards listing only the documents
+    created in this run (with their links) -- the full summaries live in WPS.
     """
     unsent = db.get_unsent_lectures()
     if unsent:
@@ -223,11 +227,26 @@ def _publish_to_wps(publisher: WpsPublisher | None, db: Database, reporter: Repo
         return
     try:
         reporter.info(f"[WPS] Publishing {len(pending_items)} lecture(s)...")
-        created, adopted, errors = publisher.publish(pending_items)
+        created, adopted, published, errors = publisher.publish(pending_items)
         reporter.info(
             f"[WPS] Done: {created} created, {adopted} already present, "
             f"{len(errors)} failed"
         )
+
+        # Notify about what was actually created in this run.
+        if published:
+            try:
+                sent = notifier.notify_published(published)
+                reporter.info(
+                    f"[Mail] Notification {'sent' if sent else 'skipped/failed'}"
+                    f" ({len(published)} doc(s))"
+                )
+            except Exception:
+                reporter.info("[Mail] Notification failed (non-fatal):")
+                traceback.print_exc()
+        else:
+            reporter.info("[Mail] Nothing new created; no notification sent.")
+
         # Mark published only what actually landed (created or already present),
         # so a failed item is retried on the next run.
         failed_titles = {e.split(":", 1)[0].strip() for e in errors}
@@ -332,6 +351,9 @@ def run():
     publisher = WpsPublisher() if os.environ.get("KDOCS_TOKEN", "").strip() else None
     if publisher is None:
         reporter.info("[WPS] KDOCS_TOKEN not set — summaries will not be published.")
+    notifier = Notifier()
+    if not notifier.enabled:
+        reporter.info("[Mail] Notification email disabled or SMTP not configured.")
 
     vpn = login_with_retry()
     client = ICourseClient(vpn)
@@ -358,7 +380,7 @@ def run():
     finally:
         scheduler.shutdown()
 
-    _publish_to_wps(publisher, db, reporter, pending_items)
+    _publish_to_wps(publisher, notifier, db, reporter, pending_items)
     reporter.run_footer()
 
 
