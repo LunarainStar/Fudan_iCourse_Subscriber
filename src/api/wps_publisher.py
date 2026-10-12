@@ -137,15 +137,26 @@ def _base_name(name: str) -> str:
     return n
 
 
+def _doc_key(name: str) -> str:
+    """Whitespace-insensitive identity for a document name.
+
+    Two channels publish into the same folders and name the same lecture
+    differently -- the iCourse digest sync writes '<course> <date> 第X-Y节'
+    while this pipeline writes '<course> <date>第X-Y节'. Comparing with all
+    whitespace removed keeps the "already present" guard from creating a
+    duplicate of a document the other channel already published.
+    """
+    return re.sub(r"\s+", "", _base_name(name))
+
+
 def _same_doc(stored: str, wanted: str) -> bool:
     """True when a stored filename denotes the wanted document.
 
-    Tolerates the stored extension and any '(n)' conflict suffix.
+    Tolerates the stored extension, any '(n)' conflict suffix, and whitespace
+    differences between the two publishing channels.
     """
-    got = _base_name(stored)
-    if got == wanted:
-        return True
-    return re.sub(r"\(\d+\)$", "", got) == wanted
+    got = re.sub(r"\(\d+\)$", "", _base_name(stored))
+    return _doc_key(got) == _doc_key(wanted)
 
 
 def _safe(name: str) -> str:
