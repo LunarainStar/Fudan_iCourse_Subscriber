@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Print ``export VAR=...`` lines for every env var that the configured
 model providers need (``api_key_env`` / ``base_url_env`` from
-``config.MODEL_PROVIDERS``), with values taken from the SECRETS_CONTEXT
+``config.MODEL_PROVIDERS``) plus ``EXTRA_SECRET_ENV_VARS``, with values
+taken from the SECRETS_CONTEXT
 JSON the workflow passes in via ``${{ toJSON(secrets) }}``.
 
 This lets users add custom providers with custom env-var names in
@@ -36,6 +37,12 @@ def main():
     except ValueError:
         print("echo '::warning::SECRETS_CONTEXT is not valid JSON'")
         return
+
+# Secrets that are not model-provider keys but are still needed by
+# main.py. Kept here (not in the workflow YAML) on purpose: editing a
+# workflow file makes GitHub hold every run for manual approval.
+EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN",)
+
     # Secret names are case-insensitive on the GitHub side; normalise.
     lookup = {str(k).upper(): v for k, v in ctx.items() if v}
 
@@ -49,6 +56,13 @@ def main():
             value = lookup.get(name.upper())
             if value:
                 print(f"export {name}={shlex.quote(str(value))}")
+
+    for name in EXTRA_SECRET_ENV_VARS:
+        if name in emitted:
+            continue
+        value = lookup.get(name.upper())
+        if value:
+            print(f"export {name}={shlex.quote(str(value))}")
 
 
 if __name__ == "__main__":
