@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Print ``export VAR=...`` lines for every env var that the configured
 model providers need (``api_key_env`` / ``base_url_env`` from
-``config.MODEL_PROVIDERS``) plus ``EXTRA_SECRET_ENV_VARS``, with values
-taken from the SECRETS_CONTEXT
+``config.MODEL_PROVIDERS``) plus anything listed in
+``EXTRA_SECRET_ENV_VARS``, with values taken from the SECRETS_CONTEXT
 JSON the workflow passes in via ``${{ toJSON(secrets) }}``.
 
 This lets users add custom providers with custom env-var names in
@@ -30,6 +30,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.runtime.config import MODEL_PROVIDERS
 
+# Secrets that are not model-provider keys but are still consumed by
+# main.py. They are exported from here rather than listed in the workflow
+# YAML on purpose: editing .github/workflows/*.yml makes GitHub flag the
+# workflow as possibly-malicious and hold every run (schedule included)
+# at `action_required` until a human approves it.
+EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN",)
+
 
 def main():
     try:
@@ -37,11 +44,6 @@ def main():
     except ValueError:
         print("echo '::warning::SECRETS_CONTEXT is not valid JSON'")
         return
-
-# Secrets that are not model-provider keys but are still needed by
-# main.py. Kept here (not in the workflow YAML) on purpose: editing a
-# workflow file makes GitHub hold every run for manual approval.
-EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN",)
 
     # Secret names are case-insensitive on the GitHub side; normalise.
     lookup = {str(k).upper(): v for k, v in ctx.items() if v}
@@ -60,6 +62,7 @@ EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN",)
     for name in EXTRA_SECRET_ENV_VARS:
         if name in emitted:
             continue
+        emitted.add(name)
         value = lookup.get(name.upper())
         if value:
             print(f"export {name}={shlex.quote(str(value))}")
