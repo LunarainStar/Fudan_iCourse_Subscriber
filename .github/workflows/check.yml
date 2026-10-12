@@ -171,6 +171,12 @@ jobs:
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+          # WPS smart-doc publishing. main.py skips the publish step when this
+          # is empty, so a missing secret degrades to "summarize only" instead
+          # of failing the run. ICOURSE_ROOT_NAME / NOTIFY_EMAIL are deliberately
+          # NOT wired here: they only have defaults when unset entirely, whereas
+          # an empty ${{ secrets.X }} would override them with "".
+          KDOCS_TOKEN: ${{ secrets.KDOCS_TOKEN }}
           # All secrets, JSON-encoded. provider_env.py exports only the
           # vars named by config.MODEL_PROVIDERS (api_key_env /
           # base_url_env), so user-defined providers with custom env-var
