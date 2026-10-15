@@ -36,6 +36,25 @@ MODEL_PROVIDERS: list[dict] = [
             
         ],
     },
+    # ── WorkBuddy（第二顺位）─────────────────────────────────────────────
+    # 紧跟 modelscope 之后：modelscope 失败就轮到这里的 V4.1，
+    # deepseek 退到第 3，gemini 第 4。
+    # 上游 copilot.tencent.com 不兼容 OpenAI（强制 stream:true、
+    # 拒收 role:"developer"、tool_choice 必须是字符串），所以 base_url
+    # 指向仓库根目录的 workbuddy_relay.py 起在 127.0.0.1 的本地代理。
+    # 该 api_key 只用来让 OpenAI 客户端非空，真正的凭据是
+    # WORKBUDDY_ACCESS_TOKEN。
+    # 模型必须是 deepseek-v4.1-flash：目录里 deepseek-v4-flash 是**另一个**
+    # 条目（maxOutputTokens 只有 50000，V4.1 是 128000）。
+    {
+        "name": "workbuddy",
+        "api_key_env": "WORKBUDDY_ACCESS_TOKEN",
+        "base_url_env": "WORKBUDDY_BASE_URL",
+        "default_base_url": "http://127.0.0.1:8787/v1",
+        "models": [
+            "deepseek-v4.1-flash",
+        ],
+    },
     {
         "name": "deepseek",
         "api_key_env": "DEEPSEEK_API_KEY",
@@ -57,24 +76,6 @@ MODEL_PROVIDERS: list[dict] = [
     #         "Qwen/Qwen3.5-397B-A17B",
     #     ],
     # },
-    # ── WorkBuddy（第二顺位）─────────────────────────────────────────────
-    # 追加在最后：modelscope / deepseek 先用，失败才回退到这里。
-    # 上游 copilot.tencent.com 不兼容 OpenAI（强制 stream:true、
-    # 拒收 role:"developer"、tool_choice 必须是字符串），所以 base_url
-    # 指向仓库根目录的 workbuddy_relay.py 起在 127.0.0.1 的本地代理。
-    # 该 api_key 只用来让 OpenAI 客户端非空，真正的凭据是
-    # WORKBUDDY_ACCESS_TOKEN。
-    # 模型必须是 deepseek-v4.1-flash：目录里 deepseek-v4-flash 是**另一个**
-    # 条目（maxOutputTokens 只有 50000，V4.1 是 128000）。
-    {
-        "name": "workbuddy",
-        "api_key_env": "WORKBUDDY_ACCESS_TOKEN",
-        "base_url_env": "WORKBUDDY_BASE_URL",
-        "default_base_url": "http://127.0.0.1:8787/v1",
-        "models": [
-            "deepseek-v4.1-flash",
-        ],
-    },
     {
         "name": "gemini",
         "api_key_env": "GEMINI_API_KEY",
