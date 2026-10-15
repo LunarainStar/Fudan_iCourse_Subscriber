@@ -179,24 +179,7 @@ jobs:
         run: |
           eval "$(python scripts/provider_env.py)"
           unset SECRETS_CONTEXT
-          # ── WorkBuddy relay（第二顺位 LLM）──────────────────────────
-          # copilot.tencent.com 拒收非流式请求、拒收 role:"developer"、
-          # 要求 tool_choice 是字符串，而 openai SDK 只会发非流式标准请求，
-          # 所以必须起一个本地代理做协议改写。没有 WORKBUDDY_ACCESS_TOKEN
-          # 时 resolve_model_providers() 会直接丢掉这个 provider，
-          # 这里也对应地不启动，保证零回归。
-          if [ -n "${WORKBUDDY_ACCESS_TOKEN:-}" ]; then
-            python workbuddy_relay.py --port 8787 &
-            RELAY_PID=$!
-            for i in $(seq 1 30); do
-              curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break
-              sleep 1
-            done
-          fi
           python -u main.py
-          STATUS=$?
-          [ -n "${RELAY_PID:-}" ] && kill $RELAY_PID 2>/dev/null || true
-          exit $STATUS
 
       - name: Deploy database to data branch
         if: always()
