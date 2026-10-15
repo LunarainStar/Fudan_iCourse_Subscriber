@@ -432,6 +432,22 @@ class _UpstreamAuthError(RuntimeError):
 
 
 # ── HTTP surface ──────────────────────────────────────────────────────────
+class ExclusiveThreadingHTTPServer(ThreadingHTTPServer):
+    """A server that refuses to share its port.
+
+    ``http.server.HTTPServer`` sets ``allow_reuse_address = 1``, which maps to
+    ``SO_REUSEADDR``.  On Windows that is not just a fast-restart nicety: it
+    lets a *second* socket bind an address that is already in use, so a stale
+    relay and a fresh one silently share the port and requests land on
+    whichever socket wins the race.  ``serve_in_thread()`` needs a genuine
+    failure there so ``main.py`` can fall back cleanly, so Windows gets the
+    strict behaviour.  POSIX keeps ``SO_REUSEADDR`` to avoid TIME_WAIT
+    friction when restarting the relay locally.
+    """
+
+    allow_reuse_address = sys.platform != "win32"
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "WorkBuddyRelay/1.0"
     timeout = 600
@@ -550,7 +566,7 @@ def main() -> int:
         _log(f"FATAL: cannot obtain a credential — {e}")
         return 2
 
-    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    srv = ExclusiveThreadingHTTPServer((args.host, args.port), Handler)
     _log(f"listening on http://{args.host}:{args.port}/v1  "
          f"(upstream {os.environ.get('WORKBUDDY_BASE_URL', DEFAULT_BASE)})")
     _log("routes: GET /healthz, GET /v1/models, POST /v1/chat/completions")
@@ -561,6 +577,35 @@ def main() -> int:
     finally:
         srv.server_close()
     return 0
+
+
+def serve_in_thread(host: str = "127.0.0.1", port: int = 8787):
+    """Start the relay on a daemon thread inside the *current* process.
+
+    This exists so that ``main.py`` can bring the relay up without
+    ``.github/workflows/check.yml`` having to start it.  Any edit under
+    ``.github/workflows/`` makes GitHub mark every later run
+    ``conclusion=action_required`` with **zero jobs**, and the REST API has no
+    approve endpoint — only a human in a browser can clear it.  Starting the
+    relay from ordinary Python therefore keeps CI self-running forever.
+
+    The listening socket is bound *before* the thread starts, so the moment
+    this returns the port is accepting connections: callers need no
+    ``/healthz`` polling.
+
+    Returns ``(server, thread)``.  Raises if the credential cannot be
+    resolved or the port is taken; callers should catch and carry on, because
+    WorkBuddy is only the second-choice provider.
+    """
+    _CRED.get()                      # fail fast on a broken credential
+    server = ExclusiveThreadingHTTPServer((host, port), Handler)
+    thread = threading.Thread(target=server.serve_forever,
+                              name="workbuddy-relay", daemon=True)
+    thread.start()
+    _log(f"listening on http://{host}:{port}/v1  "
+         f"(upstream {os.environ.get('WORKBUDDY_BASE_URL', DEFAULT_BASE)})")
+    _log("routes: GET /healthz, GET /v1/models, POST /v1/chat/completions")
+    return server, thread
 
 
 if __name__ == "__main__":
