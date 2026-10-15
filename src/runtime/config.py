@@ -63,14 +63,16 @@ MODEL_PROVIDERS: list[dict] = [
     # 拒收 role:"developer"、tool_choice 必须是字符串），所以 base_url
     # 指向仓库根目录的 workbuddy_relay.py 起在 127.0.0.1 的本地代理。
     # 该 api_key 只用来让 OpenAI 客户端非空，真正的凭据是
-    # WORKBUDDY_ACCESS_TOKEN（见 .github/workflows/check.yml）。
+    # WORKBUDDY_ACCESS_TOKEN。
+    # 模型必须是 deepseek-v4.1-flash：目录里 deepseek-v4-flash 是**另一个**
+    # 条目（maxOutputTokens 只有 50000，V4.1 是 128000）。
     {
         "name": "workbuddy",
         "api_key_env": "WORKBUDDY_ACCESS_TOKEN",
         "base_url_env": "WORKBUDDY_BASE_URL",
         "default_base_url": "http://127.0.0.1:8787/v1",
         "models": [
-            "deepseek-v4-flash",
+            "deepseek-v4.1-flash",
         ],
     },
     {
