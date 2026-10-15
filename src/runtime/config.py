@@ -55,13 +55,17 @@ MODEL_PROVIDERS: list[dict] = [
             "deepseek-v4.1-flash",
         ],
     },
+    # deepseek 官方 API（api.deepseek.com）的 V4.1 规范模型名是
+    # `deepseek-flash`。旧的 `deepseek-v4-flash` 自 2026-09-10 起被官方
+    # 标记为「已退役、临时路由到 V4.1 Flash」，能跑但随时可能下线，
+    # 所以这里直接写规范名。
     {
         "name": "deepseek",
         "api_key_env": "DEEPSEEK_API_KEY",
         "base_url_env": "DEEPSEEK_BASE_URL",
         "default_base_url": "https://api.deepseek.com/v1",
         "models": [
-            "deepseek-v4-flash"
+            "deepseek-flash",
         ],
     },
     # {
