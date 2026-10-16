@@ -130,6 +130,56 @@ class Summarizer:
             )
         return result
 
+    def complete(self, system: str, user: str,
+                 timeout: int = 180) -> tuple[str, str]:
+        """Run a one-shot completion over the same provider fallback chain.
+
+        Unlike :meth:`summarize` this takes an explicit system prompt, so it
+        can serve small side tasks (the roll-call verdict in
+        ``src/ai/rollcall.py``) without dragging in the note-taking prompt.
+
+        Returns:
+            (text, model_used) where model_used is "{provider}/{model}".
+
+        Raises:
+            RuntimeError: if every provider/model fails.
+        """
+        errors = []
+        for provider in self.providers:
+            client = self._clients[provider["name"]]
+            for model in provider["models"]:
+                model_id = f"{provider['name']}/{model}"
+                try:
+                    t0 = time.time()
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        timeout=timeout,
+                    )
+                    if not response.choices:
+                        raise ValueError(
+                            "API returned empty choices — likely content "
+                            "filter or quota exceeded"
+                        )
+                    text = response.choices[0].message.content or ""
+                    print(
+                        f"[Summarizer] Complete ({model_id}): "
+                        f"{len(user)} chars input → {len(text)} chars output "
+                        f"in {time.time() - t0:.0f}s"
+                    )
+                    return text, model_id
+                except Exception as e:
+                    print(f"[Summarizer] {model_id} complete failed: "
+                          f"{type(e).__name__}: {e}")
+                    errors.append(f"{model_id}: {e}")
+
+        raise RuntimeError(
+            "All LLM models failed (complete):\n" + "\n".join(errors)
+        )
+
     def summarize(self, title: str, content: str) -> tuple[str, str]:
         """Summarize lecture, trying providers in MODEL_PROVIDERS order.
 
