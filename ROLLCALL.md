@@ -29,11 +29,11 @@
 
 ## 2. 怎么启用
 
-只用一个 Secret：
+只有一个**可选**的 Secret（不加也能用，只是只能靠学号匹配）：
 
 | 名称 | 必填 | 内容 |
 | --- | --- | --- |
-| `STUDENT_NAME` | 是 | 你的称呼或名字，逗号分隔可写多个别名 / ASR 常见误识别，例如 `张三,张珊,张山` |
+| `STUDENT_NAME` | 否（推荐） | 你的称呼或名字，逗号分隔可写多个别名 / ASR 常见误识别，例如 `张三,张珊,张山` |
 
 在仓库 Settings → Secrets and variables → Actions → New repository secret
 里加。`StuId`（已存在，登录用）会自动复用：取学号全文、后四位、以及
