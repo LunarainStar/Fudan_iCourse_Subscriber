@@ -27,6 +27,9 @@ log greps):
      ``submit``.
   F  ``bucketer.assemble`` builds the prompt; ``Summarizer.summarize``
      calls the LLM round-robin until one succeeds.
+  F2 ``rollcall.collect`` screens the ASR segments for roll-call / a
+     question aimed at this student, then has the LLM verdict the
+     candidates; hits ride along to the notification email.
   G  persist ``update_summary``, ``mark_processed``, ``clear_error``.
   H  ``audio_downloader.release`` kills ffmpeg + deletes scratch file.
 
@@ -40,7 +43,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
-from src.ai import bucketer
+from src.ai import bucketer, rollcall
 from src.pipeline.ppt_pipeline import PPTPipeline
 from src.ai.transcriber import IncompleteAudioError, NoAudioStreamError
 from src.runtime import config
@@ -60,7 +63,8 @@ class LectureRunner:
 
     def __init__(self, client: "ICourseClient", db: "Database",
                  scheduler: "Scheduler", transcriber: "Transcriber",
-                 summarizer: "Summarizer", reporter: "Reporter"):
+                 summarizer: "Summarizer", reporter: "Reporter",
+                 callouts: Optional[list] = None):
         self._client = client
         self._db = db
         self._scheduler = scheduler
@@ -68,6 +72,10 @@ class LectureRunner:
         self._summarizer = summarizer
         self._reporter = reporter
         self._ppt = PPTPipeline(db, scheduler, reporter)
+        # Sink for roll-call/question hits (``src/ai/rollcall.py``).  ``None``
+        # switches detection off entirely; the caller passes a shared list and
+        # later hands it to the notifier.
+        self._callouts: Optional[list] = callouts
         # Official-transcript segments fetched during the prefetch decision
         # (``_needs_audio``), keyed by sub_id, so ``_get_transcript`` doesn't
         # re-fetch them one lecture later.
@@ -158,6 +166,15 @@ class LectureRunner:
         if summary is None:
             self._release_audio(sub_id)
             return None
+
+        # ── Phase F2 — roll-call / question detection ───────────────────
+        # Hybrid: keyword rules screen the ASR segments offline, then the
+        # same LLM chain that just wrote the summary verdicts only those
+        # candidates.  Runs after the summary on purpose — the two LLM calls
+        # stay sequential instead of competing for provider rate limits.
+        # Never fatal: a detection failure must not cost us the summary.
+        self._collect_callouts(course_title, sub_title, lecture,
+                               transcript_segments)
 
         # ── Phase G — persist + clear errors ───────────────────────────
         self._db.mark_processed(sub_id)
@@ -375,6 +392,39 @@ class LectureRunner:
             )
             self._db.update_error(sub_id, "summarize", str(e))
             raise
+
+    def _collect_callouts(self, course_title: str, sub_title: str,
+                          lecture: dict, transcript_segments) -> None:
+        """Append roll-call/question hits to the shared sink (best-effort).
+
+        Silent when the sink is ``None`` (detection disabled) or when the
+        transcript carries no timestamps — the cached-transcript path returns
+        ``None`` segments, and a lecture that already has a cached transcript
+        also already has a summary, so Phase A normally short-circuits it.
+        """
+        if self._callouts is None or not config.ROLLCALL_DETECT:
+            return
+        if not transcript_segments:
+            self._reporter.info(
+                "    [RollCall] no timestamped segments — skipped"
+            )
+            return
+        try:
+            hits = rollcall.collect(
+                self._summarizer, course_title, sub_title,
+                lecture.get("date", ""), transcript_segments,
+            )
+            if hits:
+                self._callouts.extend(hits)
+                self._reporter.info(
+                    f"    [RollCall] {len(hits)} hit(s) queued for the "
+                    f"notification email"
+                )
+        except Exception as e:
+            self._reporter.info(
+                f"    [WARN] roll-call detection failed: "
+                f"{type(e).__name__}: {e}"
+            )
 
     def _release_audio(self, sub_id: str):
         try:
