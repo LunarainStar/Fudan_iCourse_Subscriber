@@ -250,6 +250,12 @@ def judge(summarizer, cands: list[Candidate], ident: Identity,
     """
     if not cands or summarizer is None:
         return {}, ""
+    # ``collect`` numbers the candidates before calling us, but ``judge`` is
+    # also usable on its own — renumber so the prompt never shows the dataclass
+    # default ``0``, which the ``1 <= idx <= len(cands)`` filter below would
+    # then silently discard.
+    for i, c in enumerate(cands, 1):
+        c.index = i
     text, model = summarizer.complete(
         _JUDGE_SYSTEM, build_judge_prompt(ident, cands), timeout=timeout,
     )
