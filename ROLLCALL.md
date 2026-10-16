@@ -115,16 +115,28 @@ LLM、邮件内容一字不变）。
 
 ## 8. 验证
 
+三个脚本都在开发用的工作副本里（`icourse-pipeline/`，未提交进仓库），
+不需要网络、不需要 iCourse 账号：
+
 ```bash
 # 检测器本身：4 个环境档位（正常 / LLM 挂掉回落 / 未配置 / 关掉开关）
+# 内含假 SMTP 服务器与假 provider
 python _verify_rollcall.py            # RESULT: PASS
 
 # 接线：main.py / lecture_runner.py / provider_env.py 的 AST + 真实执行
 python _verify_rollcall_wiring.py     # RESULT: PASS
+
+# 真链路：起 workbuddy relay，用真实 WorkBuddy 后端跑一遍 A/B/C 精判
+# 需要本机 WorkBuddy 登录态（本机没装 openai SDK 时自动用 _openai_min 替身）
+python _verify_rollcall_live.py       # RESULT: PASS
 ```
 
-`_verify_rollcall.py` 还会把 `smtplib.SMTP_SSL` 换成假服务器，断言命中
+`_verify_rollcall.py` 会把 `smtplib.SMTP_SSL` 换成假服务器，断言命中
 真的进了邮件正文、主题带 `⚠ 点名/提问 N 处`、没有命中时主题与正文
 一字不变（零回归）、以及纯文本分隔线不会漏进 HTML 部分。
 
-两个脚本都在 `icourse-pipeline/` 下，不需要网络、不需要 iCourse 账号。
+`_verify_rollcall_live.py` 用一段构造的课堂转写（2 处真点名/提问 +
+3 处干扰）跑通
+`coarse_filter → build_judge_prompt → Summarizer.complete → relay → 网关`，
+断言「叫你名字」和「念你学号」两条都判成 `A`/`B`，且 `collect()` 的
+`source` 是真实模型名而不是 `rule-only` 回落。
