@@ -152,6 +152,42 @@ def _log(msg: str) -> None:
     print(f"[relay] {msg}", file=sys.stderr, flush=True)
 
 
+# Addresses this process is listening on, as full base URLs.  Filled in by
+# ``serve_in_thread`` / ``main``.  See ``upstream_base`` for why they matter.
+_SELF_ADDRS: set = set()
+
+
+def remember_self(host: str, port: int) -> None:
+    """Record the URLs this relay answers on, so we never forward to ourselves."""
+    for h in (host, "127.0.0.1", "localhost"):
+        if not h:
+            continue
+        _SELF_ADDRS.add(f"http://{h}:{port}")
+        _SELF_ADDRS.add(f"http://{h}:{port}/v1")
+
+
+def upstream_base() -> str:
+    """Base URL of the *real* WorkBuddy gateway.
+
+    ``WORKBUDDY_BASE_URL`` is shared with the pipeline's provider config, where
+    it means "where the relay listens" (see ``src/runtime/config.py``).  A
+    relay that read it naively would forward to itself — ``/v1`` plus
+    ``/v2/chat/completions`` — and every request would come back
+    ``404 unknown path /v1/v2/chat/completions``.  When the override points at
+    one of our own listening addresses we ignore it and use the real gateway.
+    """
+    for var in ("WORKBUDDY_UPSTREAM_BASE", "WORKBUDDY_BASE_URL"):
+        raw = os.environ.get(var, "").strip().rstrip("/")
+        if not raw:
+            continue
+        if var == "WORKBUDDY_BASE_URL" and raw in _SELF_ADDRS:
+            _log(f"{var}={raw} points at this relay — ignoring it for the "
+                 f"upstream call, using {DEFAULT_BASE}")
+            return DEFAULT_BASE
+        return raw
+    return DEFAULT_BASE
+
+
 def _first_existing(paths) -> str | None:
     for p in paths:
         if p and os.path.isfile(p):
@@ -374,7 +410,7 @@ def aggregate_sse(frames: list[dict]) -> dict:
 # ── upstream call ─────────────────────────────────────────────────────────
 def call_upstream(body: dict, timeout: float) -> dict:
     """POST to the gateway, read the SSE stream, return aggregated JSON."""
-    base = os.environ.get("WORKBUDDY_BASE_URL", DEFAULT_BASE).rstrip("/")
+    base = upstream_base()
     token = _CRED.get()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -491,7 +527,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": f"unknown path {self.path}"})
 
     def _upstream_models(self) -> list[dict]:
-        base = os.environ.get("WORKBUDDY_BASE_URL", DEFAULT_BASE).rstrip("/")
+        base = upstream_base()
         req = urllib.request.Request(base + CONFIG_PATH, headers={
             "Authorization": f"Bearer {_CRED.get()}",
             "Accept": "application/json, text/plain, */*",
@@ -566,9 +602,10 @@ def main() -> int:
         _log(f"FATAL: cannot obtain a credential — {e}")
         return 2
 
+    remember_self(args.host, args.port)
     srv = ExclusiveThreadingHTTPServer((args.host, args.port), Handler)
     _log(f"listening on http://{args.host}:{args.port}/v1  "
-         f"(upstream {os.environ.get('WORKBUDDY_BASE_URL', DEFAULT_BASE)})")
+         f"(upstream {upstream_base()})")
     _log("routes: GET /healthz, GET /v1/models, POST /v1/chat/completions")
     try:
         srv.serve_forever()
@@ -598,12 +635,13 @@ def serve_in_thread(host: str = "127.0.0.1", port: int = 8787):
     WorkBuddy is only the second-choice provider.
     """
     _CRED.get()                      # fail fast on a broken credential
+    remember_self(host, port)
     server = ExclusiveThreadingHTTPServer((host, port), Handler)
     thread = threading.Thread(target=server.serve_forever,
                               name="workbuddy-relay", daemon=True)
     thread.start()
     _log(f"listening on http://{host}:{port}/v1  "
-         f"(upstream {os.environ.get('WORKBUDDY_BASE_URL', DEFAULT_BASE)})")
+         f"(upstream {upstream_base()})")
     _log("routes: GET /healthz, GET /v1/models, POST /v1/chat/completions")
     return server, thread
 
