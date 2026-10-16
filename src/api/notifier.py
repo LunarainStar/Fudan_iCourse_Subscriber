@@ -20,6 +20,7 @@ from email.utils import formataddr
 from html import escape
 
 from src.runtime import config
+from src.ai import rollcall
 
 _CSS = """\
 body {
@@ -52,6 +53,26 @@ a:hover { text-decoration: underline; }
     color: #555;
     font-size: 13px;
 }
+.callout {
+    background: #fff8e1;
+    border: 1px solid #f0c36d;
+    border-left: 4px solid #e8a33d;
+    border-radius: 4px;
+    padding: 4px 16px 12px;
+    margin-bottom: 26px;
+}
+.callout h2 { border-bottom-color: #f0c36d; color: #8a5a00; }
+.callout ul { padding-left: 22px; }
+.callout .tag {
+    display: inline-block;
+    background: #e8a33d;
+    color: #fff;
+    border-radius: 3px;
+    padding: 1px 7px;
+    font-size: 12px;
+    margin-right: 4px;
+}
+.callout .tip { background: transparent; border-left: 0; padding: 6px 0 0; }
 """
 
 
@@ -73,16 +94,22 @@ class Notifier:
         self.enabled = enabled
 
     # ------------------------------------------------------------------ public
-    def notify_published(self, rows: list[dict]) -> bool:
+    def notify_published(self, rows: list[dict],
+                         callouts: list[dict] | None = None) -> bool:
         """Email a list of freshly created documents.
 
         Args:
             rows: each ``{course_title, sub_title, date, link}``.
+            callouts: roll-call / "the teacher asked me" hits collected by
+                ``src/ai/rollcall.py`` for the lectures in this run.  They are
+                rendered as a highlighted block above the document list, and
+                on their own if no document was created.
 
         Returns:
             True when an email was sent, False when skipped or failed.
         """
-        if not self.enabled or not rows:
+        callouts = list(callouts or [])
+        if not self.enabled or not (rows or callouts):
             return False
 
         courses: "OrderedDict[str, list[dict]]" = OrderedDict()
@@ -91,9 +118,16 @@ class Notifier:
 
         n = len(rows)
         subject = "[FiCS] 已生成 %d 份智能文档" % n
+        if callouts:
+            subject = "[FiCS] ⚠ 点名/提问 %d 处 · 已生成 %d 份智能文档" % (
+                len(callouts), n)
 
         # ---- plain text ----
-        plain_lines = ["iCourse 摘要已生成 WPS 智能文档，共 %d 份。" % n, ""]
+        plain_lines = rollcall.format_plain(callouts)
+        if rows:
+            plain_lines += ["iCourse 摘要已生成 WPS 智能文档，共 %d 份。" % n, ""]
+        else:
+            plain_lines += ["本次没有新增 WPS 智能文档。", ""]
         for course, items in courses.items():
             plain_lines.append("【%s】" % course)
             for it in items:
@@ -107,9 +141,16 @@ class Notifier:
         plain = "\n".join(plain_lines)
 
         # ---- html ----
-        parts = [
-            "<p>iCourse 摘要已生成 <strong>%d</strong> 份 WPS 智能文档：</p>" % n
-        ]
+        parts = []
+        if callouts:
+            parts.append(rollcall.format_html(callouts))
+        if rows:
+            parts.append(
+                "<p>iCourse 摘要已生成 <strong>%d</strong> 份 WPS 智能文档：</p>"
+                % n
+            )
+        else:
+            parts.append("<p>本次没有新增 WPS 智能文档。</p>")
         for course, items in courses.items():
             parts.append("<h2>%s</h2><ul>" % escape(course))
             for it in items:
