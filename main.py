@@ -150,7 +150,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
                     scheduler: Scheduler, transcriber: Transcriber,
                     summarizer: Summarizer, reporter: Reporter,
                     all_lectures: list[tuple[str, str, dict]],
-                    pending_items: list) -> None:
+                    pending_items: list, callouts: list) -> None:
     """Phase 2: run each lecture through LectureRunner.
 
     Pre-schedules the first lecture's prefetch (audio + images) before
@@ -162,6 +162,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
 
     runner = LectureRunner(
         client, db, scheduler, transcriber, summarizer, reporter,
+        callouts=callouts,
     )
 
     first_course, _, first_lec = all_lectures[0]
@@ -198,8 +199,26 @@ def _drive_lectures(client: ICourseClient, db: Database,
             scheduler.audio_downloader.release(sub_id)
 
 
+def _send_notification(notifier: Notifier, reporter: Reporter,
+                       published: list, callouts: list) -> None:
+    """Mail the run summary plus any roll-call hits (always non-fatal)."""
+    if not published and not callouts:
+        reporter.info("[Mail] Nothing new created; no notification sent.")
+        return
+    try:
+        sent = notifier.notify_published(published, callouts)
+        reporter.info(
+            f"[Mail] Notification {'sent' if sent else 'skipped/failed'}"
+            f" ({len(published)} doc(s), {len(callouts)} callout(s))"
+        )
+    except Exception:
+        reporter.info("[Mail] Notification failed (non-fatal):")
+        traceback.print_exc()
+
+
 def _publish_to_wps(publisher: WpsPublisher | None, notifier: Notifier, db: Database,
-                    reporter: Reporter, pending_items: list) -> None:
+                    reporter: Reporter, pending_items: list,
+                    callouts: list | None = None) -> None:
     """Append any previously-processed-but-unpublished lectures, then publish.
 
     ``db.get_unsent_lectures()`` is reused as the "not yet published" set: the
@@ -208,7 +227,9 @@ def _publish_to_wps(publisher: WpsPublisher | None, notifier: Notifier, db: Data
 
     A short notification email is sent afterwards listing only the documents
     created in this run (with their links) -- the full summaries live in WPS.
+    Roll-call hits are mailed even when nothing was published.
     """
+    callouts = list(callouts or [])
     unsent = db.get_unsent_lectures()
     if unsent:
         seen_sub_ids = {item["sub_id"] for item in pending_items}
@@ -224,6 +245,7 @@ def _publish_to_wps(publisher: WpsPublisher | None, notifier: Notifier, db: Data
         reporter.info(f"[WPS] Recovered {len(unsent)} previously unsent lecture(s)")
 
     if not (publisher and pending_items):
+        _send_notification(notifier, reporter, [], callouts)
         return
     try:
         reporter.info(f"[WPS] Publishing {len(pending_items)} lecture(s)...")
@@ -234,18 +256,7 @@ def _publish_to_wps(publisher: WpsPublisher | None, notifier: Notifier, db: Data
         )
 
         # Notify about what was actually created in this run.
-        if published:
-            try:
-                sent = notifier.notify_published(published)
-                reporter.info(
-                    f"[Mail] Notification {'sent' if sent else 'skipped/failed'}"
-                    f" ({len(published)} doc(s))"
-                )
-            except Exception:
-                reporter.info("[Mail] Notification failed (non-fatal):")
-                traceback.print_exc()
-        else:
-            reporter.info("[Mail] Nothing new created; no notification sent.")
+        _send_notification(notifier, reporter, published, callouts)
 
         # Mark published only what actually landed (created or already present),
         # so a failed item is retried on the next run.
@@ -402,6 +413,9 @@ def run():
     vpn = login_with_retry()
     client = ICourseClient(vpn)
     pending_items: list = []
+    # Roll-call / "the teacher asked me" hits, filled in by LectureRunner
+    # (``src/ai/rollcall.py``); rides along to the notification email.
+    callouts: list = []
 
     # Discover new semesters every run; only fetch catalogs not yet stored.
     _crawl_semester_catalog(client, db, reporter)
@@ -418,13 +432,14 @@ def run():
         all_lectures = _enumerate_lectures(client, db, reporter)
         _drive_lectures(
             client, db, scheduler, transcriber, summarizer, reporter,
-            all_lectures, pending_items,
+            all_lectures, pending_items, callouts,
         )
 
     finally:
         scheduler.shutdown()
 
-    _publish_to_wps(publisher, notifier, db, reporter, pending_items)
+    _publish_to_wps(publisher, notifier, db, reporter, pending_items,
+                    callouts)
     reporter.run_footer()
 
 
