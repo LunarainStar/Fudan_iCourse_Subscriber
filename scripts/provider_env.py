@@ -35,7 +35,11 @@ from src.runtime.config import MODEL_PROVIDERS
 # YAML on purpose: editing .github/workflows/*.yml makes GitHub flag the
 # workflow as possibly-malicious and hold every run (schedule included)
 # at `action_required` until a human approves it.
-EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN",)
+#
+# STUDENT_NAME is the roll-call watch list (``src/ai/rollcall.py``): the
+# student's real name cannot live in a public repo, so it ships as a Secret
+# and is read from the environment instead.
+EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN", "STUDENT_NAME")
 
 
 def main():
