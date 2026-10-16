@@ -20,6 +20,8 @@
 
 邮件包含专业排版的 Markdown 渲染内容（含 LaTeX 公式渲染）。如果老师提到了作业、考试、签到、组队等重要课程事项，会在笔记开头醒目标注。
 
+如果课堂录音里出现**点名**或**提问到你**，邮件顶部会多出一个高亮块，逐条列出命中时间、当时的原话和判定依据。识别对象是学号（复用 `STUID`，覆盖"念学号"式点名）加上可选的 `STUDENT_NAME` 姓名/别名。详见 [ROLLCALL.md](ROLLCALL.md)。
+
 
 ## 快速部署（5 分钟）
 
@@ -42,6 +44,7 @@
 | `SMTP_EMAIL` | ✅ | 用于发送邮件的 QQ 邮箱 | `123456@qq.com` |
 | `SMTP_PASSWORD` | ✅ | QQ 邮箱 SMTP **授权码**（不是登录密码） | `abcdefghijklmnop` |
 | `RECEIVER_EMAIL` | ✅ | 接收摘要邮件的邮箱 | `you@m.fudan.edu.com` |
+| `STUDENT_NAME` | ⬜ | 点名/提问监测用的姓名或别名，逗号分隔；不填则只用学号的读法匹配 | `张三,小张` |
 
 > 至少配置一个 LLM API Key（DASHSCOPE、DEEPSEEK 或 GEMINI）。程序按配置顺序自动回退尝试。如果需要选择其他的LLM供应商，可以在`src\runtime\config.py`路径下自定义供应商。
 
