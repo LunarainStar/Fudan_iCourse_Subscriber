@@ -1,4 +1,5 @@
 import os
+import re
 
 STUDENT_ID = os.environ.get("StuId", "")
 PASSWORD = os.environ.get("UISPsw", "")
@@ -205,3 +206,46 @@ COURSE_IDS = [
 # 保留此变量仅用于兼容老部署环境，新部署无需设置。
 # 例：CRAWL_TERM=25
 CRAWL_TERM = os.environ.get("CRAWL_TERM", "").strip()
+
+
+# ── 点名 / 提问监测（2026-10-17）─────────────────────────────────────────
+# 课堂录音转写里如果出现「老师点名」或「提问到你」，就在摘要邮件顶部
+# 高亮一段，列出命中时间与原文。识别对象来自两个来源：
+#   STUDENT_NAME  GitHub Secret，逗号分隔，可写多个别名 / ASR 常见误识别
+#                 （真名不能进这个公开仓库，所以只能走 Secret）
+#   StuId         已有 Secret；取全文 + 后四位（含「一二三四」这种读法），
+#                 覆盖「念学号」式的点名
+# 两者都为空 → 整个功能静默关闭，行为与以前完全一致。
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+STUDENT_NAMES = [
+    n.strip()
+    for n in re.split(r"[,，、;；]+", os.environ.get("STUDENT_NAME", ""))
+    if n.strip()
+]
+
+# The student id already lives in the StuId Secret (used to log in) — see
+# STUDENT_ID at the top of this file; ``rollcall`` reuses it so "念学号"
+# style roll-call is covered without a second Secret.
+
+# 总开关。关掉就完全不扫描（连规则粗筛都不跑）。
+ROLLCALL_DETECT = _env_flag("ROLLCALL_DETECT", True)
+# 是否把粗筛出的候选交给 LLM 精判。关掉则只用规则，零额外 LLM 调用。
+ROLLCALL_LLM = _env_flag("ROLLCALL_LLM", True)
+# 每节课最多送多少条候选给 LLM（控制额外 token 开销）。
+ROLLCALL_MAX_CANDIDATES = _env_int("ROLLCALL_MAX_CANDIDATES", 40)
