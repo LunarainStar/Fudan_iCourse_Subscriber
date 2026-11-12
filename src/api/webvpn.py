@@ -8,6 +8,7 @@ Handles:
 
 import html as html_mod
 import re
+import time
 from binascii import hexlify, unhexlify
 from urllib.parse import urlparse, urlencode, quote, urljoin
 
@@ -186,10 +187,30 @@ class WebVPNSession:
         # Pre-flight: probe the WebVPN portal.  A cold session redirects to
         # /login instantly (status 302); a hot session returns 200.  Fail
         # fast on cold — login_with_retry() in main.py will re-login.
-        warmup = self.session.get(
-            config.WEBVPN_BASE + "/", allow_redirects=False, timeout=5,
-        )
-        if warmup.status_code != 200:
+        #
+        # A read timeout here is NOT a cold session: webvpn.fudan.edu.cn
+        # intermittently completes the TCP handshake and then never answers
+        # (measured 25-60% of requests through 2026-11-09..11-12).  Treating
+        # that timeout as "cold" throws away a session we just obtained, so
+        # probe again instead.  If all probes time out we cannot tell cold
+        # from unresponsive; carry on and let the real CAS steps decide.
+        warmup = None
+        for probe in range(3):
+            try:
+                warmup = self.session.get(
+                    config.WEBVPN_BASE + "/",
+                    allow_redirects=False,
+                    timeout=25,
+                )
+                break
+            except requests.exceptions.Timeout:
+                if probe < 2:
+                    print(
+                        f"  Portal probe timed out, retrying "
+                        f"({probe + 2}/3)..."
+                    )
+                    time.sleep(3)
+        if warmup is not None and warmup.status_code != 200:
             raise RuntimeError("WebVPN session cold — re-login needed")
 
         idp_vpn_base = get_vpn_url(config.IDP_BASE)
@@ -573,11 +594,18 @@ class WebVPNSession:
         return ticket_url
 
     def _establish_session(self, ticket_url: str):
-        """Step 7: Follow the ticket URL to establish WebVPN session."""
+        """Step 7: Follow the ticket URL to establish WebVPN session.
+
+        The portal occasionally accepts the TCP connection and then never
+        responds, so the per-request timeout is generous (45s) and the
+        retries are spaced out.  A timeout with the ticket cookie already
+        present is treated as success — the session is usable and a
+        re-login would only burn another ticket.
+        """
         for attempt in range(3):
             try:
                 resp = self.session.get(
-                    ticket_url, allow_redirects=True, timeout=20
+                    ticket_url, allow_redirects=True, timeout=45
                 )
                 if resp.status_code == 200:
                     print("    Session established.")
@@ -595,5 +623,6 @@ class WebVPNSession:
                     return
                 if attempt < 2:
                     print(f"    Timeout, retrying ({attempt + 2}/3)...")
+                    time.sleep(5)
                     continue
                 raise
