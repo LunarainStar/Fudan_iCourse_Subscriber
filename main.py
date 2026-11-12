@@ -36,9 +36,13 @@ def login_with_retry(max_attempts: int = 10) -> WebVPNSession:
     The iCourse CAS step (authenticate_icourse) has its own inner retry
     loop for transient redirect-chain hiccups; this outer loop only runs
     when those inner retries are exhausted, which generally means the
-    WebVPN session itself needs a fresh login.  5 attempts handles the
-    long tail of times when CAS rejects multiple fresh sessions in a
-    row before letting one through.
+    WebVPN session itself needs a fresh login.
+
+    The backoff grows 5s -> 10s -> 20s -> 30s (capped).  webvpn.fudan.edu.cn
+    goes through windows where it accepts the TCP connection and then stays
+    silent on more than half of requests; hammering it with a fresh login
+    every 5 seconds during such a window just burns tickets.  Waiting
+    longer between attempts gives the window time to pass.
     """
     for attempt in range(max_attempts):
         try:
@@ -50,8 +54,11 @@ def login_with_retry(max_attempts: int = 10) -> WebVPNSession:
             return vpn
         except Exception as e:
             if attempt < max_attempts - 1:
-                print(f"  Failed: {type(e).__name__}: {e}; retrying...")
-                time.sleep(5)
+                delay = min(5 * (2 ** attempt), 30)
+                print(
+                    f"  Failed: {type(e).__name__}: {e}; retrying in {delay}s..."
+                )
+                time.sleep(delay)
             else:
                 raise
 
