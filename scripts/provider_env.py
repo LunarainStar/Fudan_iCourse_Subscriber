@@ -39,7 +39,7 @@ from src.runtime.config import MODEL_PROVIDERS
 # STUDENT_NAME is the roll-call watch list (``src/ai/rollcall.py``): the
 # student's real name cannot live in a public repo, so it ships as a Secret
 # and is read from the environment instead.
-EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN", "STUDENT_NAME")
+EXTRA_SECRET_ENV_VARS = ("KDOCS_TOKEN", "STUDENT_NAME", "UIS_TOTP_SECRET")
 
 
 def main():
