@@ -203,6 +203,29 @@ COURSE_IDS = [
     if c.strip()
 ]
 
+# ── 明确没有回放的课程（2026-11-18）─────────────────────────────────────
+# 教务系统对 39153（人工智能与应用经济学）报了 playback_status=1，即
+# 「有回放」，但四路探测（video_list / playurl / content.playback /
+# sub_detail）永远拿不到地址；用户已向授课方确认这门课根本没有录播。
+# 结果就是每天白跑 10 讲 × 4 条探测路径，日志里刷满
+# `No video URL — skipping`，而且因为新讲次是从 has_playback 现算的、
+# 不看 error_count，这个重试永远不会停。
+#
+# 列在这里的课程会被整门跳过：连 get_course_detail 都不调。
+# 想恢复（例如后来真的上传了回放）：把课程号从下面删掉即可，
+# 也可以用环境变量 NO_RECORDING_COURSE_IDS（逗号分隔）整体覆盖，
+# 覆盖时上面的默认值不再生效。
+_NO_RECORDING_COURSE_IDS_DEFAULT = ("39153",)
+
+NO_RECORDING_COURSE_IDS = {
+    c.strip()
+    for c in re.split(
+        r"[,，、;；\s]+",
+        os.environ.get("NO_RECORDING_COURSE_IDS", "").strip(),
+    )
+    if c.strip()
+} or set(_NO_RECORDING_COURSE_IDS_DEFAULT)
+
 # 学期级课程目录爬取（已弃用 — main.py 现在自动发现所有学期）。
 # 保留此变量仅用于兼容老部署环境，新部署无需设置。
 # 例：CRAWL_TERM=25
