@@ -86,6 +86,17 @@ def _enumerate_lectures(client: ICourseClient, db: Database,
     course boundaries when picking the "next" lecture."""
     out: list[tuple[str, str, dict]] = []
     for course_id in config.COURSE_IDS:
+        # Courses confirmed to have no recordings at all are skipped before
+        # any API call: the school system still reports has_playback for
+        # them, so without this gate every run re-probes every lecture and
+        # re-prints `No video URL — skipping` forever.  See
+        # NO_RECORDING_COURSE_IDS in src/runtime/config.py.
+        if course_id in config.NO_RECORDING_COURSE_IDS:
+            reporter.info(
+                f"[Course] {course_id} skipped — confirmed to have no "
+                f"recordings (NO_RECORDING_COURSE_IDS)."
+            )
+            continue
         try:
             _check_session(client)
             detail = client.get_course_detail(course_id)
